@@ -2,7 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
-import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 
 import '../models/route_models.dart';
@@ -11,6 +12,7 @@ import '../services/places_service.dart';
 import '../utils/app_theme.dart';
 import '../utils/formatters.dart';
 import '../widgets/glass_card.dart';
+import '../widgets/osm_map_view.dart';
 import 'navigation_screen.dart';
 
 class RouteSelectionScreen extends StatefulWidget {
@@ -24,16 +26,18 @@ class _RouteSelectionScreenState extends State<RouteSelectionScreen> {
   final _destinationController = TextEditingController();
   final _places = PlacesService();
   final _sourceController = TextEditingController(text: 'Current location');
+  final _mapController = MapController();
   Timer? _debounce;
   List<PlacePrediction> _predictions = [];
   bool _loadingPlace = false;
-  GoogleMapController? _mapController;
+  bool _mapReady = false;
 
   @override
   void dispose() {
     _debounce?.cancel();
     _destinationController.dispose();
     _sourceController.dispose();
+    _mapController.dispose();
     super.dispose();
   }
 
@@ -49,31 +53,29 @@ class _RouteSelectionScreenState extends State<RouteSelectionScreen> {
       body: Stack(
         children: [
           Positioned.fill(
-            child: GoogleMap(
-              onMapCreated: (controller) => _mapController = controller,
-              initialCameraPosition:
-                  CameraPosition(target: initialTarget, zoom: 13),
-              myLocationEnabled: true,
-              myLocationButtonEnabled: false,
-              zoomControlsEnabled: false,
-              trafficEnabled: true,
-              polylines: {
+            child: YezdiOsmMap(
+              mapController: _mapController,
+              center: initialTarget,
+              zoom: 13,
+              currentLocation:
+                  pos == null ? null : LatLng(pos.latitude, pos.longitude),
+              destination: nav.activeRoute?.destination,
+              onMapReady: () {
+                _mapReady = true;
+                final activeRoute = nav.activeRoute;
+                if (activeRoute != null) _fitRoute(activeRoute.polyline);
+              },
+              routes: [
                 for (var i = 0; i < nav.routeOptions.length; i++)
-                  Polyline(
-                    polylineId: PolylineId('route_$i'),
+                  RouteMapOverlay(
                     points: nav.routeOptions[i].polyline,
-                    width: i == nav.selectedRouteIndex ? 7 : 4,
+                    strokeWidth: i == nav.selectedRouteIndex ? 7 : 4,
+                    borderStrokeWidth: i == nav.selectedRouteIndex ? 4 : 2,
                     color: i == nav.selectedRouteIndex
                         ? AppColors.green
                         : AppColors.blue.withValues(alpha: .45),
                   ),
-              },
-              markers: {
-                if (nav.activeRoute != null)
-                  Marker(
-                      markerId: const MarkerId('destination'),
-                      position: nav.activeRoute!.destination),
-              },
+              ],
             ),
           ),
           Container(
@@ -140,35 +142,29 @@ class _RouteSelectionScreenState extends State<RouteSelectionScreen> {
       _predictions = [];
       _destinationController.text = prediction.description;
     });
-    final target = await _places.placeLatLng(prediction.placeId);
+    final target =
+        prediction.location ?? await _places.placeLatLng(prediction.placeId);
     if (target != null && mounted) {
       final nav = context.read<NavService>();
       await nav.fetchRoutes(target);
+      if (!mounted) return;
       if (nav.activeRoute != null) _fitRoute(nav.activeRoute!.polyline);
     }
     if (mounted) setState(() => _loadingPlace = false);
   }
 
   void _fitRoute(List<LatLng> points) {
-    if (points.isEmpty || _mapController == null) return;
-    var minLat = points.first.latitude;
-    var maxLat = points.first.latitude;
-    var minLng = points.first.longitude;
-    var maxLng = points.first.longitude;
-    for (final point in points) {
-      minLat = point.latitude < minLat ? point.latitude : minLat;
-      maxLat = point.latitude > maxLat ? point.latitude : maxLat;
-      minLng = point.longitude < minLng ? point.longitude : minLng;
-      maxLng = point.longitude > maxLng ? point.longitude : maxLng;
-    }
-    _mapController!.animateCamera(
-      CameraUpdate.newLatLngBounds(
-        LatLngBounds(
-            southwest: LatLng(minLat, minLng),
-            northeast: LatLng(maxLat, maxLng)),
-        70,
-      ),
-    );
+    if (points.length < 2 || !_mapReady) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_mapReady) return;
+      _mapController.fitCamera(
+        CameraFit.coordinates(
+          coordinates: points,
+          padding: const EdgeInsets.fromLTRB(70, 150, 70, 260),
+          maxZoom: 16,
+        ),
+      );
+    });
   }
 }
 

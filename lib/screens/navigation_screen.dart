@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
-import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 
 import '../models/route_models.dart';
@@ -10,6 +11,7 @@ import '../utils/app_theme.dart';
 import '../utils/formatters.dart';
 import '../widgets/glass_card.dart';
 import '../widgets/nav_arrow_widget.dart';
+import '../widgets/osm_map_view.dart';
 import '../widgets/status_action_button.dart';
 import 'home_screen.dart';
 
@@ -21,26 +23,30 @@ class NavigationScreen extends StatefulWidget {
 }
 
 class _NavigationScreenState extends State<NavigationScreen> {
-  GoogleMapController? _mapController;
+  final _mapController = MapController();
+  late final BikeBluetoothService _btService;
+  late final NavService _navService;
   bool _followUser = true;
+  bool _mapReady = false;
   bool _stopped = false;
+  DateTime _lastCameraMove = DateTime.fromMillisecondsSinceEpoch(0);
 
   @override
   void initState() {
     super.initState();
+    _btService = context.read<BikeBluetoothService>();
+    _navService = context.read<NavService>();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      final bt = context.read<BikeBluetoothService>();
-      context.read<NavService>().startNavigation(bt);
+      if (mounted) _navService.startNavigation(_btService);
     });
   }
 
   @override
   void dispose() {
     if (!_stopped) {
-      context
-          .read<NavService>()
-          .stopNavigation(btService: context.read<BikeBluetoothService>());
+      _navService.stopNavigation(btService: _btService);
     }
+    _mapController.dispose();
     super.dispose();
   }
 
@@ -49,6 +55,9 @@ class _NavigationScreenState extends State<NavigationScreen> {
     final nav = context.watch<NavService>();
     final bt = context.watch<BikeBluetoothService>();
     final pos = nav.currentPosition;
+    if (_followUser && pos != null) {
+      _moveToCurrent(pos.latitude, pos.longitude);
+    }
 
     return Scaffold(
       body: Stack(
@@ -59,32 +68,26 @@ class _NavigationScreenState extends State<NavigationScreen> {
                     color: AppColors.background,
                     child: const Center(child: CircularProgressIndicator()),
                   )
-                : GoogleMap(
-                    onMapCreated: (controller) => _mapController = controller,
-                    initialCameraPosition: CameraPosition(
-                      target: LatLng(pos.latitude, pos.longitude),
-                      zoom: 17,
-                      tilt: 48,
-                    ),
-                    myLocationEnabled: true,
-                    myLocationButtonEnabled: false,
-                    zoomControlsEnabled: false,
-                    trafficEnabled: true,
-                    onCameraMove: (_) => setState(() => _followUser = false),
-                    polylines: {
-                      Polyline(
-                        polylineId: const PolylineId('active_route'),
+                : YezdiOsmMap(
+                    mapController: _mapController,
+                    center: LatLng(pos.latitude, pos.longitude),
+                    zoom: 17,
+                    currentLocation: LatLng(pos.latitude, pos.longitude),
+                    destination: nav.activeRoute?.destination,
+                    onMapReady: () => _mapReady = true,
+                    onPositionChanged: (_, hasGesture) {
+                      if (hasGesture && _followUser && mounted) {
+                        setState(() => _followUser = false);
+                      }
+                    },
+                    routes: [
+                      RouteMapOverlay(
                         points: nav.polylinePoints,
                         color: AppColors.green,
-                        width: 7,
+                        strokeWidth: 7,
+                        borderStrokeWidth: 4,
                       ),
-                    },
-                    markers: {
-                      if (nav.activeRoute != null)
-                        Marker(
-                            markerId: const MarkerId('destination'),
-                            position: nav.activeRoute!.destination),
-                    },
+                    ],
                   ),
           ),
           Container(
@@ -120,13 +123,9 @@ class _NavigationScreenState extends State<NavigationScreen> {
                 backgroundColor: AppColors.surface,
                 foregroundColor: AppColors.green,
                 onPressed: () {
-                  _mapController?.animateCamera(
-                    CameraUpdate.newCameraPosition(
-                      CameraPosition(
-                          target: LatLng(pos.latitude, pos.longitude),
-                          zoom: 17,
-                          tilt: 48),
-                    ),
+                  _mapController.move(
+                    LatLng(pos.latitude, pos.longitude),
+                    17,
                   );
                   setState(() => _followUser = true);
                 },
@@ -140,12 +139,25 @@ class _NavigationScreenState extends State<NavigationScreen> {
 
   void _stopAndExit() {
     _stopped = true;
-    final bt = context.read<BikeBluetoothService>();
-    context.read<NavService>().stopNavigation(btService: bt);
+    _navService.stopNavigation(btService: _btService);
     Navigator.of(context).pushAndRemoveUntil(
       MaterialPageRoute(builder: (_) => const HomeScreen()),
       (_) => false,
     );
+  }
+
+  void _moveToCurrent(double latitude, double longitude) {
+    if (!_mapReady) return;
+    final now = DateTime.now();
+    if (now.difference(_lastCameraMove) < const Duration(milliseconds: 900)) {
+      return;
+    }
+    _lastCameraMove = now;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_mapReady || !_followUser) return;
+      _mapController.move(LatLng(latitude, longitude), 17);
+    });
   }
 }
 
@@ -296,21 +308,22 @@ class _TurnPanel extends StatelessWidget {
   }
 
   NavDirection _directionForStep(NavStep step) {
-    final m = step.maneuver.toLowerCase();
+    final type = step.maneuverType.toLowerCase();
+    final modifier = step.modifier.toLowerCase();
     final text = step.instruction.toLowerCase();
-    if (m.contains('arrive') || text.contains('destination')) {
+    if (type == 'arrive' || text.contains('destination')) {
       return NavDirection.arrive;
     }
-    if (m.contains('roundabout')) {
+    if (type.contains('roundabout') || type == 'rotary') {
       return NavDirection.roundabout;
     }
-    if (m.contains('uturn') || text.contains('u-turn')) {
+    if (modifier.contains('uturn') || text.contains('u-turn')) {
       return NavDirection.uTurn;
     }
-    if (m.contains('left') || text.contains(' left')) {
+    if (modifier.contains('left') || text.contains(' left')) {
       return NavDirection.left;
     }
-    if (m.contains('right') || text.contains(' right')) {
+    if (modifier.contains('right') || text.contains(' right')) {
       return NavDirection.right;
     }
     return NavDirection.straight;

@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
-import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 
 import '../providers/profile_provider.dart';
@@ -8,6 +8,7 @@ import '../services/bluetooth_service.dart';
 import '../services/navigation_service.dart';
 import '../utils/app_theme.dart';
 import '../widgets/glass_card.dart';
+import '../widgets/osm_map_view.dart';
 import '../widgets/status_action_button.dart';
 import 'profile_screen.dart';
 import 'route_selection_screen.dart';
@@ -204,17 +205,12 @@ class _MapPreview extends StatelessWidget {
                   child: const Center(child: CircularProgressIndicator()),
                 )
               else
-                GoogleMap(
-                  initialCameraPosition: CameraPosition(
-                    target: LatLng(pos.latitude, pos.longitude),
-                    zoom: 15,
-                    tilt: 35,
-                  ),
-                  myLocationEnabled: true,
-                  myLocationButtonEnabled: false,
-                  zoomControlsEnabled: false,
-                  compassEnabled: false,
-                  trafficEnabled: true,
+                YezdiOsmMap(
+                  center: LatLng(pos.latitude, pos.longitude),
+                  zoom: 15,
+                  currentLocation: LatLng(pos.latitude, pos.longitude),
+                  interactive: false,
+                  showAttribution: false,
                 ),
               Positioned(
                 left: 14,

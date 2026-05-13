@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 import '../services/navigation_service.dart';
+import '../widgets/osm_map_view.dart';
 import 'navigation_screen.dart';
 
 class DestinationScreen extends StatefulWidget {
@@ -26,6 +27,13 @@ class _DestinationScreenState extends State<DestinationScreen> {
   }
 
   @override
+  void dispose() {
+    _latCtrl.dispose();
+    _lngCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final nav = context.watch<NavService>();
     final pos = nav.currentPosition;
@@ -40,35 +48,18 @@ class _DestinationScreenState extends State<DestinationScreen> {
             height: 260,
             child: pos == null
                 ? const Center(child: CircularProgressIndicator())
-                : GoogleMap(
-                    initialCameraPosition: CameraPosition(
-                      target: LatLng(pos.latitude, pos.longitude),
-                      zoom: 14,
-                    ),
-                    onTap: (latlng) {
+                : YezdiOsmMap(
+                    center: LatLng(pos.latitude, pos.longitude),
+                    zoom: 14,
+                    currentLocation: LatLng(pos.latitude, pos.longitude),
+                    destination: _picked,
+                    onTap: (_, latlng) {
                       setState(() {
                         _picked = latlng;
                         _latCtrl.text = latlng.latitude.toStringAsFixed(6);
                         _lngCtrl.text = latlng.longitude.toStringAsFixed(6);
                       });
                     },
-                    markers: {
-                      Marker(
-                        markerId: const MarkerId('current'),
-                        position: LatLng(pos.latitude, pos.longitude),
-                        icon: BitmapDescriptor.defaultMarkerWithHue(
-                            BitmapDescriptor.hueAzure),
-                      ),
-                      if (_picked != null)
-                        Marker(
-                          markerId: const MarkerId('dest'),
-                          position: _picked!,
-                          icon: BitmapDescriptor.defaultMarkerWithHue(
-                              BitmapDescriptor.hueRed),
-                        ),
-                    },
-                    myLocationEnabled: true,
-                    myLocationButtonEnabled: true,
                   ),
           ),
 
@@ -155,9 +146,10 @@ class _DestinationScreenState extends State<DestinationScreen> {
     setState(() => _loading = true);
     final nav = context.read<NavService>();
     await nav.fetchRoute(LatLng(lat, lng));
+    if (!mounted) return;
     setState(() => _loading = false);
 
-    if (nav.error.isEmpty && mounted) {
+    if (nav.error.isEmpty) {
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(builder: (_) => const NavigationScreen()),
