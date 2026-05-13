@@ -516,7 +516,8 @@ class NavService extends ChangeNotifier {
   }
 
   List<LatLng> _decodePolyline(String encoded) {
-    return PolylinePoints.decodePolyline(encoded)
+    return PolylinePoints()
+        .decodePolyline(encoded)
         .map((point) => LatLng(point.latitude, point.longitude))
         .toList(growable: false);
   }

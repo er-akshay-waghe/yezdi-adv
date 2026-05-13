@@ -58,7 +58,10 @@ class GoogleDashboardMap extends StatelessWidget {
         bearing: bearing,
         tilt: tilt,
       ),
-      onMapCreated: onMapCreated,
+      onMapCreated: (controller) {
+        controller.setMapStyle(googleDarkMapStyle);
+        onMapCreated?.call(controller);
+      },
       onTap: onTap,
       onCameraMove: onCameraMove,
       onCameraIdle: onCameraIdle,
@@ -74,7 +77,6 @@ class GoogleDashboardMap extends StatelessWidget {
       myLocationEnabled: myLocationEnabled,
       myLocationButtonEnabled: false,
       mapToolbarEnabled: false,
-      style: googleDarkMapStyle,
       polylines: {
         for (var i = 0; i < routes.length; i++)
           if (routes[i].points.length > 1)
