@@ -1,0 +1,50 @@
+name: yezdiadv
+description: Yezdi Adventure Bluetooth Navigation App
+
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Bluetooth BLE
+  flutter_blue_plus: ^1.31.15
+
+  # Maps & navigation
+  google_maps_flutter: ^2.5.3
+  flutter_polyline_points: ^2.0.0
+
+  # Location / GPS
+  geolocator: ^11.0.0
+
+  # Permissions
+  permission_handler: ^11.3.0
+
+  # HTTP (Directions API)
+  http: ^1.2.0
+
+  # State management
+  provider: ^6.1.1
+
+  # Local persistence & media
+  shared_preferences: ^2.2.2
+  image_picker: ^1.0.7
+
+  # Places search and motion polish
+  google_places_flutter: ^2.0.6
+  flutter_animate: ^4.5.0
+
+  # Icons (arrow assets)
+  cupertino_icons: ^1.0.6
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true
