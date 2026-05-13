@@ -1,14 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
-import 'package:latlong2/latlong.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:provider/provider.dart';
 
 import '../providers/profile_provider.dart';
 import '../services/bluetooth_service.dart';
+import '../services/dashboard_status_service.dart';
 import '../services/navigation_service.dart';
 import '../utils/app_theme.dart';
 import '../widgets/glass_card.dart';
-import '../widgets/osm_map_view.dart';
+import '../widgets/google_dashboard_map.dart';
 import '../widgets/status_action_button.dart';
 import 'profile_screen.dart';
 import 'route_selection_screen.dart';
@@ -20,6 +21,7 @@ class HomeScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final bt = context.watch<BikeBluetoothService>();
     final nav = context.watch<NavService>();
+    final status = context.watch<DashboardStatusService>();
     final profile = context.watch<ProfileProvider>().profile;
 
     return Scaffold(
@@ -29,7 +31,7 @@ class HomeScreen extends StatelessWidget {
           SafeArea(
             child: CustomScrollView(
               slivers: [
-                SliverToBoxAdapter(child: _TopBar(bt: bt)),
+                SliverToBoxAdapter(child: _TopBar(bt: bt, status: status)),
                 SliverToBoxAdapter(
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(18, 8, 18, 0),
@@ -77,8 +79,9 @@ class HomeScreen extends StatelessWidget {
 
 class _TopBar extends StatelessWidget {
   final BikeBluetoothService bt;
+  final DashboardStatusService status;
 
-  const _TopBar({required this.bt});
+  const _TopBar({required this.bt, required this.status});
 
   @override
   Widget build(BuildContext context) {
@@ -131,6 +134,8 @@ class _TopBar extends StatelessWidget {
             onTap: () => Navigator.of(context)
                 .push(MaterialPageRoute(builder: (_) => const ProfileScreen())),
           ),
+          const SizedBox(width: 10),
+          _NetworkBars(bars: status.networkBars, online: status.isOnline),
         ],
       ),
     );
@@ -205,12 +210,13 @@ class _MapPreview extends StatelessWidget {
                   child: const Center(child: CircularProgressIndicator()),
                 )
               else
-                YezdiOsmMap(
+                GoogleDashboardMap(
                   center: LatLng(pos.latitude, pos.longitude),
                   zoom: 15,
                   currentLocation: LatLng(pos.latitude, pos.longitude),
+                  bearing: nav.bearing,
                   interactive: false,
-                  showAttribution: false,
+                  showTraffic: false,
                 ),
               Positioned(
                 left: 14,
@@ -240,6 +246,40 @@ class _MapPreview extends StatelessWidget {
           ),
         ),
       ).animate().fadeIn(duration: 450.ms).scale(begin: const Offset(.98, .98)),
+    );
+  }
+}
+
+class _NetworkBars extends StatelessWidget {
+  final int bars;
+  final bool online;
+
+  const _NetworkBars({required this.bars, required this.online});
+
+  @override
+  Widget build(BuildContext context) {
+    final color = online ? AppColors.green : AppColors.red;
+    return SizedBox(
+      width: 38,
+      height: 28,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          for (var i = 1; i <= 4; i++)
+            Container(
+              width: 5,
+              height: 6.0 + i * 4,
+              margin: const EdgeInsets.symmetric(horizontal: 1.5),
+              decoration: BoxDecoration(
+                color: i <= bars && online
+                    ? color
+                    : AppColors.muted.withValues(alpha: 0.32),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+        ],
+      ),
     );
   }
 }

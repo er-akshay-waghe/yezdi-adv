@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:latlong2/latlong.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:provider/provider.dart';
 import '../services/navigation_service.dart';
-import '../widgets/osm_map_view.dart';
+import '../widgets/google_dashboard_map.dart';
 import 'navigation_screen.dart';
 
 class DestinationScreen extends StatefulWidget {
@@ -48,12 +48,12 @@ class _DestinationScreenState extends State<DestinationScreen> {
             height: 260,
             child: pos == null
                 ? const Center(child: CircularProgressIndicator())
-                : YezdiOsmMap(
+                : GoogleDashboardMap(
                     center: LatLng(pos.latitude, pos.longitude),
                     zoom: 14,
                     currentLocation: LatLng(pos.latitude, pos.longitude),
                     destination: _picked,
-                    onTap: (_, latlng) {
+                    onTap: (latlng) {
                       setState(() {
                         _picked = latlng;
                         _latCtrl.text = latlng.latitude.toStringAsFixed(6);

@@ -1,4 +1,4 @@
-import 'package:latlong2/latlong.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 
 class PlacePrediction {
   final String description;
@@ -11,16 +11,18 @@ class PlacePrediction {
     this.location,
   });
 
-  factory PlacePrediction.fromNominatimJson(Map<String, dynamic> json) {
-    final osmType = json['osm_type']?.toString() ?? 'place';
-    final osmId = json['osm_id']?.toString() ?? '';
-    final lat = double.tryParse(json['lat']?.toString() ?? '');
-    final lng = double.tryParse(json['lon']?.toString() ?? '');
-
+  factory PlacePrediction.fromAutocompleteJson(Map<String, dynamic> json) {
     return PlacePrediction(
-      description: json['display_name'] as String? ?? 'Unnamed place',
-      placeId: '$osmType:$osmId',
-      location: lat == null || lng == null ? null : LatLng(lat, lng),
+      description: json['description'] as String? ?? '',
+      placeId: json['place_id'] as String? ?? '',
+    );
+  }
+
+  PlacePrediction copyWith({LatLng? location}) {
+    return PlacePrediction(
+      description: description,
+      placeId: placeId,
+      location: location ?? this.location,
     );
   }
 }
@@ -29,6 +31,7 @@ class RouteOption {
   final String summary;
   final int distanceMeters;
   final int durationSeconds;
+  final int durationInTrafficSeconds;
   final List<LatLng> polyline;
   final List<NavStep> steps;
   final LatLng destination;
@@ -37,6 +40,7 @@ class RouteOption {
     required this.summary,
     required this.distanceMeters,
     required this.durationSeconds,
+    required this.durationInTrafficSeconds,
     required this.polyline,
     required this.steps,
     required this.destination,
@@ -46,25 +50,19 @@ class RouteOption {
 class NavStep {
   final String instruction;
   final String maneuver;
-  final String maneuverType;
-  final String modifier;
-  final int? exitNumber;
-  final String roadName;
   final int distanceMeters;
   final int durationSeconds;
   final LatLng startLocation;
   final LatLng endLocation;
+  final List<LatLng> polyline;
 
   const NavStep({
     required this.instruction,
     required this.maneuver,
-    required this.maneuverType,
-    required this.modifier,
-    required this.exitNumber,
-    required this.roadName,
     required this.distanceMeters,
     required this.durationSeconds,
     required this.startLocation,
     required this.endLocation,
+    required this.polyline,
   });
 }

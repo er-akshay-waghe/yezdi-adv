@@ -3,18 +3,25 @@ import 'package:provider/provider.dart';
 
 import 'providers/profile_provider.dart';
 import 'screens/home_screen.dart';
+import 'services/background_navigation_service.dart';
 import 'services/bluetooth_service.dart';
+import 'services/dashboard_status_service.dart';
 import 'services/navigation_service.dart';
 import 'utils/app_theme.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  try {
+    await BackgroundNavigationService.configure();
+  } catch (_) {}
   runApp(
     MultiProvider(
       providers: [
         ChangeNotifierProvider(
             create: (_) => BikeBluetoothService()..initializeAutoConnect()),
         ChangeNotifierProvider(create: (_) => NavService()..initLocation()),
+        ChangeNotifierProvider(
+            create: (_) => DashboardStatusService()..initialize()),
         ChangeNotifierProvider(create: (_) => ProfileProvider()..load()),
       ],
       child: const YezdiNavApp(),

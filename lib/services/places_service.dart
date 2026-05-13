@@ -1,13 +1,10 @@
 import 'dart:convert';
 
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:http/http.dart' as http;
-import 'package:latlong2/latlong.dart';
 
+import '../config/google_maps_config.dart';
 import '../models/route_models.dart';
-
-const String nominatimBaseUrl = 'https://nominatim.openstreetmap.org';
-const String yezdiHttpUserAgent =
-    'yezdiadv/1.0 (OpenStreetMap Flutter navigation)';
 
 class PlacesService {
   final Map<String, LatLng> _locationCache = {};
@@ -17,69 +14,78 @@ class PlacesService {
     LatLng? location,
   }) async {
     final query = input.trim();
-    if (query.length < 2) return [];
+    if (query.length < 2 || !hasGoogleMapsApiKey) return [];
 
     final params = <String, String>{
-      'format': 'jsonv2',
-      'q': query,
-      'limit': '6',
-      'addressdetails': '0',
-      'dedupe': '1',
-      'countrycodes': 'in',
+      'input': query,
+      'key': googleMapsApiKey,
+      'components': 'country:in',
+      'language': 'en',
+      'types': 'geocode|establishment',
     };
 
     if (location != null) {
-      params.addAll(_viewBoxParams(location));
+      params['location'] = '${location.latitude},${location.longitude}';
+      params['radius'] = '50000';
     }
 
-    final uri =
-        Uri.parse('$nominatimBaseUrl/search').replace(queryParameters: params);
+    final uri = Uri.https(
+      'maps.googleapis.com',
+      '/maps/api/place/autocomplete/json',
+      params,
+    );
 
     try {
-      final response = await http.get(uri, headers: _headers).timeout(
-            const Duration(seconds: 10),
-          );
+      final response = await http.get(uri).timeout(const Duration(seconds: 8));
       if (response.statusCode != 200) return [];
 
-      final raw = jsonDecode(response.body);
-      if (raw is! List) return [];
-
-      final predictions = raw
-          .whereType<Map<String, dynamic>>()
-          .map(PlacePrediction.fromNominatimJson)
-          .where((p) => p.location != null)
-          .toList();
-
-      for (final prediction in predictions) {
-        _locationCache[prediction.placeId] = prediction.location!;
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      if (data['status'] != 'OK' && data['status'] != 'ZERO_RESULTS') {
+        return [];
       }
 
-      return predictions;
+      final predictions = data['predictions'] as List? ?? const [];
+      return predictions
+          .whereType<Map<String, dynamic>>()
+          .map(PlacePrediction.fromAutocompleteJson)
+          .where((p) => p.placeId.isNotEmpty)
+          .toList();
     } catch (_) {
       return [];
     }
   }
 
   Future<LatLng?> placeLatLng(String placeId) async {
-    return _locationCache[placeId];
-  }
+    if (placeId.isEmpty || !hasGoogleMapsApiKey) return _locationCache[placeId];
+    if (_locationCache.containsKey(placeId)) return _locationCache[placeId];
 
-  Map<String, String> get _headers => const {
-        'Accept': 'application/json',
-        'User-Agent': yezdiHttpUserAgent,
-        'Accept-Language': 'en-IN,en;q=0.9',
-      };
+    final uri = Uri.https(
+      'maps.googleapis.com',
+      '/maps/api/place/details/json',
+      {
+        'place_id': placeId,
+        'fields': 'geometry',
+        'key': googleMapsApiKey,
+      },
+    );
 
-  Map<String, String> _viewBoxParams(LatLng center) {
-    const delta = 0.6;
-    final left = center.longitude - delta;
-    final right = center.longitude + delta;
-    final top = center.latitude + delta;
-    final bottom = center.latitude - delta;
+    try {
+      final response = await http.get(uri).timeout(const Duration(seconds: 8));
+      if (response.statusCode != 200) return null;
 
-    return {
-      'viewbox': '$left,$top,$right,$bottom',
-      'bounded': '0',
-    };
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final location = data['result']?['geometry']?['location'];
+      if (location is! Map) return null;
+
+      final lat = (location['lat'] as num?)?.toDouble();
+      final lng = (location['lng'] as num?)?.toDouble();
+      if (lat == null || lng == null) return null;
+
+      final latLng = LatLng(lat, lng);
+      _locationCache[placeId] = latLng;
+      return latLng;
+    } catch (_) {
+      return null;
+    }
   }
 }

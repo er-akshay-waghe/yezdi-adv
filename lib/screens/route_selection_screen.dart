@@ -2,8 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
-import 'package:flutter_map/flutter_map.dart';
-import 'package:latlong2/latlong.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:provider/provider.dart';
 
 import '../models/route_models.dart';
@@ -12,7 +11,7 @@ import '../services/places_service.dart';
 import '../utils/app_theme.dart';
 import '../utils/formatters.dart';
 import '../widgets/glass_card.dart';
-import '../widgets/osm_map_view.dart';
+import '../widgets/google_dashboard_map.dart';
 import 'navigation_screen.dart';
 
 class RouteSelectionScreen extends StatefulWidget {
@@ -26,18 +25,17 @@ class _RouteSelectionScreenState extends State<RouteSelectionScreen> {
   final _destinationController = TextEditingController();
   final _places = PlacesService();
   final _sourceController = TextEditingController(text: 'Current location');
-  final _mapController = MapController();
+  GoogleMapController? _mapController;
   Timer? _debounce;
   List<PlacePrediction> _predictions = [];
   bool _loadingPlace = false;
-  bool _mapReady = false;
 
   @override
   void dispose() {
     _debounce?.cancel();
     _destinationController.dispose();
     _sourceController.dispose();
-    _mapController.dispose();
+    _mapController?.dispose();
     super.dispose();
   }
 
@@ -53,15 +51,14 @@ class _RouteSelectionScreenState extends State<RouteSelectionScreen> {
       body: Stack(
         children: [
           Positioned.fill(
-            child: YezdiOsmMap(
-              mapController: _mapController,
+            child: GoogleDashboardMap(
               center: initialTarget,
               zoom: 13,
               currentLocation:
                   pos == null ? null : LatLng(pos.latitude, pos.longitude),
               destination: nav.activeRoute?.destination,
-              onMapReady: () {
-                _mapReady = true;
+              onMapCreated: (controller) {
+                _mapController = controller;
                 final activeRoute = nav.activeRoute;
                 if (activeRoute != null) _fitRoute(activeRoute.polyline);
               },
@@ -69,8 +66,7 @@ class _RouteSelectionScreenState extends State<RouteSelectionScreen> {
                 for (var i = 0; i < nav.routeOptions.length; i++)
                   RouteMapOverlay(
                     points: nav.routeOptions[i].polyline,
-                    strokeWidth: i == nav.selectedRouteIndex ? 7 : 4,
-                    borderStrokeWidth: i == nav.selectedRouteIndex ? 4 : 2,
+                    width: i == nav.selectedRouteIndex ? 7 : 4,
                     color: i == nav.selectedRouteIndex
                         ? AppColors.green
                         : AppColors.blue.withValues(alpha: .45),
@@ -154,17 +150,30 @@ class _RouteSelectionScreenState extends State<RouteSelectionScreen> {
   }
 
   void _fitRoute(List<LatLng> points) {
-    if (points.length < 2 || !_mapReady) return;
+    if (points.length < 2 || _mapController == null) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_mapReady) return;
-      _mapController.fitCamera(
-        CameraFit.coordinates(
-          coordinates: points,
-          padding: const EdgeInsets.fromLTRB(70, 150, 70, 260),
-          maxZoom: 16,
-        ),
+      if (!mounted || _mapController == null) return;
+      _mapController!.animateCamera(
+        CameraUpdate.newLatLngBounds(_boundsFor(points), 80),
       );
     });
+  }
+
+  LatLngBounds _boundsFor(List<LatLng> points) {
+    var minLat = points.first.latitude;
+    var maxLat = points.first.latitude;
+    var minLng = points.first.longitude;
+    var maxLng = points.first.longitude;
+    for (final point in points.skip(1)) {
+      minLat = point.latitude < minLat ? point.latitude : minLat;
+      maxLat = point.latitude > maxLat ? point.latitude : maxLat;
+      minLng = point.longitude < minLng ? point.longitude : minLng;
+      maxLng = point.longitude > maxLng ? point.longitude : maxLng;
+    }
+    return LatLngBounds(
+      southwest: LatLng(minLat, minLng),
+      northeast: LatLng(maxLat, maxLng),
+    );
   }
 }
 

@@ -5,46 +5,52 @@ publish_to: 'none'
 version: 1.0.0+1
 
 environment:
-  sdk: '>=3.8.0 <4.0.0'
-  flutter: '>=3.32.0'
+  sdk: '>=3.10.0 <4.0.0'
+  flutter: '>=3.35.0'
 
 dependencies:
   flutter:
     sdk: flutter
 
   # Bluetooth BLE
-  flutter_blue_plus: ^1.31.15
+  flutter_blue_plus: ^2.3.1
 
-  # Open-source maps & navigation
-  flutter_map: ^8.3.0
-  latlong2: ^0.10.1
+  # Google Maps & navigation
+  google_maps_flutter: ^2.17.0
+  flutter_polyline_points: ^3.1.0
 
   # Location / GPS
-  geolocator: ^11.0.0
+  geolocator: ^14.0.2
 
   # Permissions
-  permission_handler: ^11.3.0
+  permission_handler: ^12.0.1
 
-  # HTTP (OSRM/Nominatim)
-  http: ^1.2.0
+  # HTTP (Google Directions / Places)
+  http: ^1.6.0
 
   # State management
-  provider: ^6.1.1
+  provider: ^6.1.5+1
 
   # Local persistence & media
-  shared_preferences: ^2.2.2
-  image_picker: ^1.0.7
+  shared_preferences: ^2.5.3
+  image_picker: ^1.2.1
 
-  # Motion polish
-  flutter_animate: ^4.5.0
+  # Dashboard, background, notifications, and device status
+  flutter_animate: ^4.5.2
+  flutter_background_service: ^5.1.0
+  notification_listener_service: ^0.3.5
+  telephony: ^0.2.0
+  connectivity_plus: ^7.1.1
+  battery_plus: ^7.0.0
+  flutter_compass: ^0.8.1
 
   # Icons (arrow assets)
-  cupertino_icons: ^1.0.6
+  cupertino_icons: ^1.0.8
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^3.0.0
+  flutter_lints: ^6.0.0
 
 flutter:
   uses-material-design: true
