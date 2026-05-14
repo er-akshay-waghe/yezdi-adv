@@ -8,14 +8,63 @@ import '../services/bluetooth_service.dart';
 import '../services/dashboard_status_service.dart';
 import '../services/navigation_service.dart';
 import '../utils/app_theme.dart';
-import '../widgets/glass_card.dart';
 import '../widgets/google_dashboard_map.dart';
-import '../widgets/status_action_button.dart';
+import '../widgets/premium_components.dart';
+import 'credits_screen.dart';
+import 'feedback_screen.dart';
+import 'gallery_screen.dart';
+import 'help_screen.dart';
 import 'profile_screen.dart';
 import 'route_selection_screen.dart';
+import 'upcoming_rides_screen.dart';
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  int _index = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    final pages = [
+      const _DashboardTab(),
+      const UpcomingRidesScreen(),
+      const GalleryScreen(),
+      const _MenuTab(),
+    ];
+
+    return Scaffold(
+      body: IndexedStack(index: _index, children: pages),
+      bottomNavigationBar: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(26),
+            child: NavigationBar(
+              height: 72,
+              selectedIndex: _index,
+              onDestinationSelected: (value) => setState(() => _index = value),
+              destinations: const [
+                NavigationDestination(icon: Icon(Icons.dashboard), label: 'Dash'),
+                NavigationDestination(icon: Icon(Icons.terrain), label: 'Rides'),
+                NavigationDestination(icon: Icon(Icons.photo_library), label: 'Gallery'),
+                NavigationDestination(icon: Icon(Icons.grid_view), label: 'Menu'),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DashboardTab extends StatelessWidget {
+  const _DashboardTab();
 
   @override
   Widget build(BuildContext context) {
@@ -24,190 +73,184 @@ class HomeScreen extends StatelessWidget {
     final status = context.watch<DashboardStatusService>();
     final profile = context.watch<ProfileProvider>().profile;
 
-    return Scaffold(
-      body: Stack(
-        children: [
-          const _DashboardBackdrop(),
-          SafeArea(
-            child: CustomScrollView(
-              slivers: [
-                SliverToBoxAdapter(child: _TopBar(bt: bt, status: status)),
-                SliverToBoxAdapter(
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(18, 8, 18, 0),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          profile.name.isEmpty
-                              ? 'Ready to ride'
-                              : 'Ready, ${profile.name.split(' ').first}',
-                          style: Theme.of(context)
-                              .textTheme
-                              .headlineSmall
-                              ?.copyWith(
-                                fontWeight: FontWeight.w800,
-                                letterSpacing: 0,
-                              ),
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          bt.status,
-                          style: const TextStyle(
-                              color: AppColors.muted, fontSize: 13),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                SliverToBoxAdapter(child: _SearchLauncher(nav: nav)),
-                SliverToBoxAdapter(child: _MapPreview(nav: nav)),
-                SliverToBoxAdapter(
-                    child:
-                        _BikeStatusCard(bt: bt, bikeModel: profile.bikeModel)),
-                const SliverToBoxAdapter(child: _RideStatsGrid()),
-                SliverToBoxAdapter(child: _RecentBleLog(logs: bt.txLog)),
-                const SliverToBoxAdapter(child: SizedBox(height: 28)),
-              ],
+    return AdventureBackdrop(
+      child: SafeArea(
+        child: CustomScrollView(
+          slivers: [
+            SliverToBoxAdapter(
+              child: _TopCommandBar(
+                bt: bt,
+                status: status,
+                riderName: profile.name,
+              ),
             ),
-          ),
-        ],
+            SliverToBoxAdapter(child: _HeroCommand(nav: nav, bt: bt)),
+            SliverToBoxAdapter(child: _LiveMapPreview(nav: nav)),
+            SliverToBoxAdapter(child: _BikeStatusPanel(bt: bt, status: status)),
+            SliverToBoxAdapter(child: _AdventureStats(nav: nav, status: status)),
+            SliverToBoxAdapter(child: _QuickActions(bt: bt)),
+            SliverToBoxAdapter(child: _ClusterPackets(logs: bt.txLog)),
+            const SliverToBoxAdapter(child: SizedBox(height: 110)),
+          ],
+        ),
       ),
     );
   }
 }
 
-class _TopBar extends StatelessWidget {
+class _TopCommandBar extends StatelessWidget {
   final BikeBluetoothService bt;
   final DashboardStatusService status;
+  final String riderName;
 
-  const _TopBar({required this.bt, required this.status});
+  const _TopCommandBar({
+    required this.bt,
+    required this.status,
+    required this.riderName,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final bluetoothColor = !bt.isBluetoothOn
-        ? AppColors.red
-        : bt.isScanning
-            ? AppColors.green
-            : AppColors.blue;
-    final bikeColor = switch (bt.connectionState) {
-      BikeConnectionState.connected => AppColors.green,
-      BikeConnectionState.connecting => AppColors.yellow,
-      BikeConnectionState.disconnected => AppColors.muted,
-    };
-
+    final firstName = riderName.trim().isEmpty ? 'Rider' : riderName.split(' ').first;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(18, 12, 18, 8),
+      padding: const EdgeInsets.fromLTRB(18, 14, 18, 6),
       child: Row(
         children: [
           Expanded(
-            child: Text(
-              'YEZDI ADV',
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: 1.8,
-                  ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'My Yezdi',
+                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                        fontWeight: FontWeight.w900,
+                        shadows: [
+                          Shadow(
+                            color: AppColors.orange.withValues(alpha: .32),
+                            blurRadius: 18,
+                          ),
+                        ],
+                      ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  'Ready, $firstName',
+                  style: const TextStyle(color: AppColors.muted),
+                ),
+              ],
             ),
           ),
-          StatusActionButton(
-            icon: bt.isBluetoothOn ? Icons.bluetooth : Icons.bluetooth_disabled,
-            color: bluetoothColor,
-            tooltip:
-                bt.isScanning ? 'Scanning for MY YEZDI' : 'Bluetooth status',
-            onTap: bt.isScanning
-                ? bt.stopScan
-                : () => bt.startScan(autoConnect: true),
+          GlowIconButton(
+            icon: Icons.notifications,
+            tooltip: 'Notifications',
+            color: status.latestAlert == null ? AppColors.amber : AppColors.orange,
           ),
           const SizedBox(width: 10),
-          StatusActionButton(
-            icon: bt.isConnected ? Icons.two_wheeler : Icons.motorcycle,
-            color: bikeColor,
-            tooltip:
-                bt.isConnected ? 'MY YEZDI connected' : 'Connect to MY YEZDI',
-            onTap: bt.isConnected ? bt.disconnect : bt.enableAutoConnect,
-          ),
-          const SizedBox(width: 10),
-          StatusActionButton(
-            icon: Icons.person,
+          GlowIconButton(
+            icon: Icons.settings,
+            tooltip: 'Profile',
             color: AppColors.blue,
-            tooltip: 'Rider profile',
-            onTap: () => Navigator.of(context)
-                .push(MaterialPageRoute(builder: (_) => const ProfileScreen())),
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const ProfileScreen()),
+            ),
           ),
-          const SizedBox(width: 10),
-          _NetworkBars(bars: status.networkBars, online: status.isOnline),
         ],
       ),
     );
   }
 }
 
-class _SearchLauncher extends StatelessWidget {
+class _HeroCommand extends StatelessWidget {
   final NavService nav;
+  final BikeBluetoothService bt;
 
-  const _SearchLauncher({required this.nav});
+  const _HeroCommand({required this.nav, required this.bt});
 
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.all(18),
-      child: GestureDetector(
-        onTap: () => Navigator.of(context).push(
-            MaterialPageRoute(builder: (_) => const RouteSelectionScreen())),
-        child: GlassCard(
-          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
-          child: Row(
-            children: [
-              const Icon(Icons.search, color: AppColors.green),
-              const SizedBox(width: 14),
-              const Expanded(
-                child: Text(
-                  'Search destination',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+      padding: const EdgeInsets.fromLTRB(18, 14, 18, 0),
+      child: PremiumPanel(
+        padding: const EdgeInsets.all(20),
+        borderColor: AppColors.orange.withValues(alpha: .38),
+        glowColor: AppColors.orange.withValues(alpha: .18),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 64,
+                  height: 64,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: const LinearGradient(colors: AppColors.adventureGradient),
+                    boxShadow: [
+                      BoxShadow(
+                        color: AppColors.orange.withValues(alpha: .34),
+                        blurRadius: 30,
+                      ),
+                    ],
+                  ),
+                  child: const Icon(Icons.explore, color: AppColors.background, size: 34),
                 ),
-              ),
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                decoration: BoxDecoration(
-                  color: AppColors.green.withValues(alpha: 0.14),
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(
-                      color: AppColors.green.withValues(alpha: 0.35)),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Adventure Command', style: Theme.of(context).textTheme.titleLarge),
+                      const SizedBox(height: 4),
+                      Text(
+                        bt.status,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(color: AppColors.muted),
+                      ),
+                    ],
+                  ),
                 ),
-                child: const Text('Navigate',
-                    style: TextStyle(
-                        color: AppColors.green, fontWeight: FontWeight.w800)),
+              ],
+            ),
+            const SizedBox(height: 20),
+            GradientActionButton(
+              icon: Icons.navigation,
+              label: 'Plan new route',
+              expanded: true,
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const RouteSelectionScreen()),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
-      ).animate().fadeIn(duration: 350.ms).slideY(begin: .08, end: 0),
+      ).animate().fadeIn(duration: 350.ms).slideY(begin: .06, end: 0),
     );
   }
 }
 
-class _MapPreview extends StatelessWidget {
+class _LiveMapPreview extends StatelessWidget {
   final NavService nav;
 
-  const _MapPreview({required this.nav});
+  const _LiveMapPreview({required this.nav});
 
   @override
   Widget build(BuildContext context) {
     final pos = nav.currentPosition;
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 18),
+      padding: const EdgeInsets.fromLTRB(18, 18, 18, 0),
       child: SizedBox(
-        height: 260,
+        height: 240,
         child: ClipRRect(
-          borderRadius: BorderRadius.circular(28),
+          borderRadius: BorderRadius.circular(24),
           child: Stack(
             fit: StackFit.expand,
             children: [
               if (pos == null)
-                Container(
-                  color: AppColors.surface,
-                  child: const Center(child: CircularProgressIndicator()),
+                const DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(colors: [AppColors.surfaceHigh, AppColors.surface]),
+                  ),
+                  child: Center(child: CircularProgressIndicator()),
                 )
               else
                 GoogleDashboardMap(
@@ -219,23 +262,24 @@ class _MapPreview extends StatelessWidget {
                   showTraffic: false,
                 ),
               Positioned(
-                left: 14,
-                right: 14,
-                bottom: 14,
-                child: GlassCard(
-                  padding: const EdgeInsets.all(14),
-                  borderRadius: BorderRadius.circular(20),
+                left: 12,
+                right: 12,
+                bottom: 12,
+                child: PremiumPanel(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  borderRadius: BorderRadius.circular(18),
                   child: Row(
                     children: [
-                      const Icon(Icons.my_location,
-                          color: AppColors.blue, size: 19),
-                      const SizedBox(width: 10),
+                      const Icon(Icons.my_location, color: AppColors.blue, size: 18),
+                      const SizedBox(width: 8),
                       Expanded(
                         child: Text(
                           pos == null
-                              ? 'Locating rider'
+                              ? 'Acquiring rider location'
                               : '${pos.latitude.toStringAsFixed(5)}, ${pos.longitude.toStringAsFixed(5)}',
-                          style: const TextStyle(fontWeight: FontWeight.w700),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontWeight: FontWeight.w800),
                         ),
                       ),
                     ],
@@ -245,7 +289,322 @@ class _MapPreview extends StatelessWidget {
             ],
           ),
         ),
-      ).animate().fadeIn(duration: 450.ms).scale(begin: const Offset(.98, .98)),
+      ).animate().fadeIn(delay: 120.ms).scale(begin: const Offset(.98, .98)),
+    );
+  }
+}
+
+class _BikeStatusPanel extends StatelessWidget {
+  final BikeBluetoothService bt;
+  final DashboardStatusService status;
+
+  const _BikeStatusPanel({required this.bt, required this.status});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(18, 18, 18, 0),
+      child: PremiumPanel(
+        child: Row(
+          children: [
+            _StatusHalo(
+              icon: bt.isConnected ? Icons.two_wheeler : Icons.bluetooth_disabled,
+              color: bt.isConnected ? AppColors.green : AppColors.orange,
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    bt.isConnected ? 'MY YEZDI cluster online' : 'Cluster standby',
+                    style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
+                  ),
+                  const SizedBox(height: 5),
+                  Text(bt.status, style: const TextStyle(color: AppColors.muted)),
+                ],
+              ),
+            ),
+            _NetworkBars(bars: status.networkBars, online: status.isOnline),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _AdventureStats extends StatelessWidget {
+  final NavService nav;
+  final DashboardStatusService status;
+
+  const _AdventureStats({required this.nav, required this.status});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(18, 18, 18, 0),
+      child: Row(
+        children: [
+          Expanded(child: _StatTile(icon: Icons.speed, label: 'Speed', value: '${nav.speedKmh.round()}')),
+          const SizedBox(width: 12),
+          Expanded(child: _StatTile(icon: Icons.explore, label: 'Heading', value: '${status.heading.round()}°')),
+          const SizedBox(width: 12),
+          Expanded(child: _StatTile(icon: Icons.battery_5_bar, label: 'Battery', value: '${status.batteryLevel}%')),
+        ],
+      ),
+    );
+  }
+}
+
+class _QuickActions extends StatelessWidget {
+  final BikeBluetoothService bt;
+
+  const _QuickActions({required this.bt});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SectionTitle(title: 'Quick Controls', padding: EdgeInsets.fromLTRB(18, 22, 18, 10)),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 18),
+          child: Row(
+            children: [
+              Expanded(
+                child: _ActionTile(
+                  icon: Icons.bluetooth_searching,
+                  label: bt.isConnected ? 'Disconnect' : 'Connect',
+                  onTap: bt.isConnected ? bt.disconnect : bt.enableAutoConnect,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _ActionTile(
+                  icon: Icons.terrain,
+                  label: 'Rides',
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const UpcomingRidesScreen()),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _ActionTile(
+                  icon: Icons.support_agent,
+                  label: 'Help',
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const HelpScreen()),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ClusterPackets extends StatelessWidget {
+  final List<String> logs;
+
+  const _ClusterPackets({required this.logs});
+
+  @override
+  Widget build(BuildContext context) {
+    if (logs.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(18, 18, 18, 0),
+      child: PremiumPanel(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Cluster Sync', style: TextStyle(fontWeight: FontWeight.w900)),
+            const SizedBox(height: 10),
+            ...logs.take(3).map(
+                  (log) => Padding(
+                    padding: const EdgeInsets.only(bottom: 6),
+                    child: Text(
+                      log,
+                      style: const TextStyle(
+                        color: AppColors.amber,
+                        fontFamily: 'monospace',
+                        fontSize: 11,
+                      ),
+                    ),
+                  ),
+                ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MenuTab extends StatelessWidget {
+  const _MenuTab();
+
+  @override
+  Widget build(BuildContext context) {
+    final items = [
+      _MenuItem(Icons.terrain, 'Upcoming Rides', 'Plan community adventures', const UpcomingRidesScreen()),
+      _MenuItem(Icons.photo_library, 'Photos Gallery', 'Ride memories and trail shots', const GalleryScreen()),
+      _MenuItem(Icons.feedback, 'Feedback', 'Bugs, ideas, and reviews', const FeedbackScreen()),
+      _MenuItem(Icons.workspace_premium, 'Credits', 'Creators and project story', const CreditsScreen()),
+      _MenuItem(Icons.help_center, 'Help', 'Video guides and FAQs', const HelpScreen()),
+      _MenuItem(Icons.person, 'Profile', 'Rider and bike details', const ProfileScreen()),
+    ];
+
+    return AdventureBackdrop(
+      child: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.only(bottom: 110),
+          children: [
+            const SectionTitle(
+              title: 'Command Menu',
+              subtitle: 'Tools, support, and ride community',
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 18),
+              child: GridView.builder(
+                itemCount: items.length,
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 2,
+                  crossAxisSpacing: 12,
+                  mainAxisSpacing: 12,
+                  childAspectRatio: .95,
+                ),
+                itemBuilder: (context, index) {
+                  final item = items[index];
+                  return _MenuCard(item: item)
+                      .animate()
+                      .fadeIn(delay: (60 * index).ms)
+                      .slideY(begin: .05, end: 0);
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MenuItem {
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final Widget page;
+
+  const _MenuItem(this.icon, this.title, this.subtitle, this.page);
+}
+
+class _MenuCard extends StatelessWidget {
+  final _MenuItem item;
+
+  const _MenuCard({required this.item});
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(22),
+      onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => item.page)),
+      child: PremiumPanel(
+        glowColor: AppColors.blue.withValues(alpha: .08),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _StatusHalo(icon: item.icon, color: AppColors.amber, size: 46),
+            const Spacer(),
+            Text(item.title, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
+            const SizedBox(height: 6),
+            Text(
+              item.subtitle,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: AppColors.muted, fontSize: 12),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ActionTile extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  const _ActionTile({required this.icon, required this.label, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(22),
+      onTap: onTap,
+      child: PremiumPanel(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          children: [
+            Icon(icon, color: AppColors.amber),
+            const SizedBox(height: 10),
+            Text(label, textAlign: TextAlign.center, style: const TextStyle(fontWeight: FontWeight.w900)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _StatTile extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+
+  const _StatTile({required this.icon, required this.label, required this.value});
+
+  @override
+  Widget build(BuildContext context) {
+    return PremiumPanel(
+      padding: const EdgeInsets.all(14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: AppColors.blue, size: 20),
+          const SizedBox(height: 12),
+          Text(value, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900)),
+          Text(label, style: const TextStyle(color: AppColors.muted, fontSize: 12)),
+        ],
+      ),
+    );
+  }
+}
+
+class _StatusHalo extends StatelessWidget {
+  final IconData icon;
+  final Color color;
+  final double size;
+
+  const _StatusHalo({required this.icon, required this.color, this.size = 58});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: color.withValues(alpha: .13),
+        border: Border.all(color: color.withValues(alpha: .42)),
+        boxShadow: [
+          BoxShadow(color: color.withValues(alpha: .2), blurRadius: 24),
+        ],
+      ),
+      child: Icon(icon, color: color),
     );
   }
 }
@@ -259,211 +618,22 @@ class _NetworkBars extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final color = online ? AppColors.green : AppColors.red;
-    return SizedBox(
-      width: 38,
-      height: 28,
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.end,
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          for (var i = 1; i <= 4; i++)
-            Container(
-              width: 5,
-              height: 6.0 + i * 4,
-              margin: const EdgeInsets.symmetric(horizontal: 1.5),
-              decoration: BoxDecoration(
-                color: i <= bars && online
-                    ? color
-                    : AppColors.muted.withValues(alpha: 0.32),
-                borderRadius: BorderRadius.circular(2),
-              ),
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        for (var i = 1; i <= 4; i++)
+          Container(
+            width: 5,
+            height: 7.0 + i * 4,
+            margin: const EdgeInsets.symmetric(horizontal: 1.5),
+            decoration: BoxDecoration(
+              color: i <= bars && online
+                  ? color
+                  : AppColors.muted.withValues(alpha: 0.3),
+              borderRadius: BorderRadius.circular(2),
             ),
-        ],
-      ),
+          ),
+      ],
     );
   }
-}
-
-class _BikeStatusCard extends StatelessWidget {
-  final BikeBluetoothService bt;
-  final String bikeModel;
-
-  const _BikeStatusCard({required this.bt, required this.bikeModel});
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(18, 18, 18, 0),
-      child: GlassCard(
-        child: Row(
-          children: [
-            Container(
-              width: 58,
-              height: 58,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                gradient: LinearGradient(
-                  colors: bt.isConnected
-                      ? [
-                          AppColors.green.withValues(alpha: .95),
-                          AppColors.blue.withValues(alpha: .65)
-                        ]
-                      : [AppColors.surfaceHigh, AppColors.surface],
-                ),
-              ),
-              child:
-                  const Icon(Icons.two_wheeler, color: Colors.white, size: 30),
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(bikeModel,
-                      style: const TextStyle(
-                          fontSize: 16, fontWeight: FontWeight.w800)),
-                  const SizedBox(height: 5),
-                  Text(
-                    bt.isConnected
-                        ? 'MY YEZDI display online'
-                        : 'Waiting for MY YEZDI',
-                    style: TextStyle(
-                        color:
-                            bt.isConnected ? AppColors.green : AppColors.muted),
-                  ),
-                ],
-              ),
-            ),
-            Icon(bt.isConnected ? Icons.verified : Icons.sync,
-                color: bt.isConnected ? AppColors.green : AppColors.yellow),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _RideStatsGrid extends StatelessWidget {
-  const _RideStatsGrid();
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(18, 18, 18, 0),
-      child: const Row(
-        children: [
-          Expanded(
-              child: _StatCard(
-                  icon: Icons.route, label: 'Today', value: '0.0 km')),
-          SizedBox(width: 12),
-          Expanded(
-              child: _StatCard(
-                  icon: Icons.timer, label: 'Ride time', value: '0 min')),
-          SizedBox(width: 12),
-          Expanded(
-              child: _StatCard(
-                  icon: Icons.speed, label: 'Avg speed', value: '--')),
-        ],
-      ),
-    );
-  }
-}
-
-class _StatCard extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final String value;
-
-  const _StatCard(
-      {required this.icon, required this.label, required this.value});
-
-  @override
-  Widget build(BuildContext context) {
-    return GlassCard(
-      padding: const EdgeInsets.all(14),
-      borderRadius: BorderRadius.circular(22),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(icon, color: AppColors.blue, size: 20),
-          const SizedBox(height: 12),
-          Text(value,
-              style:
-                  const TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
-          const SizedBox(height: 4),
-          Text(label,
-              style: const TextStyle(color: AppColors.muted, fontSize: 12)),
-        ],
-      ),
-    );
-  }
-}
-
-class _RecentBleLog extends StatelessWidget {
-  final List<String> logs;
-
-  const _RecentBleLog({required this.logs});
-
-  @override
-  Widget build(BuildContext context) {
-    if (logs.isEmpty) return const SizedBox.shrink();
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(18, 18, 18, 0),
-      child: GlassCard(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Cluster packets',
-                style: TextStyle(fontWeight: FontWeight.w800)),
-            const SizedBox(height: 10),
-            ...logs.take(3).map(
-                  (log) => Padding(
-                    padding: const EdgeInsets.only(bottom: 6),
-                    child: Text(log,
-                        style: const TextStyle(
-                            color: AppColors.green,
-                            fontFamily: 'monospace',
-                            fontSize: 11)),
-                  ),
-                ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _DashboardBackdrop extends StatelessWidget {
-  const _DashboardBackdrop();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [Color(0xFF071018), Color(0xFF07090D), Color(0xFF101316)],
-        ),
-      ),
-      child: CustomPaint(painter: _RoadLinePainter(), size: Size.infinite),
-    );
-  }
-}
-
-class _RoadLinePainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = AppColors.green.withValues(alpha: 0.07)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1;
-    for (var i = 0; i < 8; i++) {
-      final y = size.height * (0.16 + i * 0.12);
-      canvas.drawLine(Offset(0, y), Offset(size.width, y + 80), paint);
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }

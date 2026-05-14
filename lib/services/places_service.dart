@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:http/http.dart' as http;
 
@@ -8,20 +9,25 @@ import '../models/route_models.dart';
 
 class PlacesService {
   final Map<String, LatLng> _locationCache = {};
+  String _sessionToken = _newSessionToken();
 
   Future<List<PlacePrediction>> autocomplete(
     String input, {
     LatLng? location,
   }) async {
     final query = input.trim();
-    if (query.length < 2 || !hasGoogleMapsApiKey) return [];
+    if (query.length < 2) return [];
+    if (!hasGoogleMapsApiKey) {
+      debugPrint('Places autocomplete skipped: Google Maps API key missing');
+      return [];
+    }
 
     final params = <String, String>{
       'input': query,
       'key': googleMapsApiKey,
       'components': 'country:in',
       'language': 'en',
-      'types': 'geocode|establishment',
+      'sessiontoken': _sessionToken,
     };
 
     if (location != null) {
@@ -41,6 +47,9 @@ class PlacesService {
 
       final data = jsonDecode(response.body) as Map<String, dynamic>;
       if (data['status'] != 'OK' && data['status'] != 'ZERO_RESULTS') {
+        debugPrint(
+          'Places autocomplete failed: ${data['status']} ${data['error_message'] ?? ''}',
+        );
         return [];
       }
 
@@ -51,6 +60,7 @@ class PlacesService {
           .where((p) => p.placeId.isNotEmpty)
           .toList();
     } catch (_) {
+      debugPrint('Places autocomplete request failed');
       return [];
     }
   }
@@ -66,6 +76,7 @@ class PlacesService {
         'place_id': placeId,
         'fields': 'geometry',
         'key': googleMapsApiKey,
+        'sessiontoken': _sessionToken,
       },
     );
 
@@ -74,6 +85,12 @@ class PlacesService {
       if (response.statusCode != 200) return null;
 
       final data = jsonDecode(response.body) as Map<String, dynamic>;
+      if (data['status'] != 'OK') {
+        debugPrint(
+          'Place details failed: ${data['status']} ${data['error_message'] ?? ''}',
+        );
+        return null;
+      }
       final location = data['result']?['geometry']?['location'];
       if (location is! Map) return null;
 
@@ -83,9 +100,15 @@ class PlacesService {
 
       final latLng = LatLng(lat, lng);
       _locationCache[placeId] = latLng;
+      _sessionToken = _newSessionToken();
       return latLng;
     } catch (_) {
+      debugPrint('Place details request failed');
       return null;
     }
+  }
+
+  static String _newSessionToken() {
+    return DateTime.now().microsecondsSinceEpoch.toString();
   }
 }

@@ -29,6 +29,7 @@ class _RouteSelectionScreenState extends State<RouteSelectionScreen> {
   Timer? _debounce;
   List<PlacePrediction> _predictions = [];
   bool _loadingPlace = false;
+  String _searchMessage = '';
 
   @override
   void dispose() {
@@ -68,19 +69,29 @@ class _RouteSelectionScreenState extends State<RouteSelectionScreen> {
                     points: nav.routeOptions[i].polyline,
                     width: i == nav.selectedRouteIndex ? 7 : 4,
                     color: i == nav.selectedRouteIndex
-                        ? AppColors.green
+                        ? AppColors.amber
                         : AppColors.blue.withValues(alpha: .45),
                   ),
               ],
             ),
           ),
-          Container(
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.center,
-                colors: [Color(0xF207090D), Color(0x0007090D)],
+          IgnorePointer(
+            child: Container(
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.center,
+                  colors: [Color(0xF207090D), Color(0x0007090D)],
+                ),
               ),
+            ),
+          ),
+          Positioned(
+            right: 14,
+            bottom: nav.routeOptions.isEmpty ? 28 : 218,
+            child: MapZoomControls(
+              onZoomIn: () => _zoomBy(1),
+              onZoomOut: () => _zoomBy(-1),
             ),
           ),
           SafeArea(
@@ -91,7 +102,7 @@ class _RouteSelectionScreenState extends State<RouteSelectionScreen> {
                   destinationController: _destinationController,
                   predictions: _predictions,
                   loading: _loadingPlace || nav.isLoadingRoute,
-                  error: nav.error,
+                  error: nav.error.isNotEmpty ? nav.error : _searchMessage,
                   onBack: () => Navigator.pop(context),
                   onDestinationChanged: _onDestinationChanged,
                   onPredictionTap: _selectPrediction,
@@ -122,12 +133,26 @@ class _RouteSelectionScreenState extends State<RouteSelectionScreen> {
 
   void _onDestinationChanged(String value) {
     _debounce?.cancel();
+    if (value.trim().length < 2) {
+      setState(() {
+        _predictions = [];
+        _searchMessage = '';
+      });
+      return;
+    }
     _debounce = Timer(const Duration(milliseconds: 350), () async {
       final nav = context.read<NavService>();
       final pos = nav.currentPosition;
       final near = pos == null ? null : LatLng(pos.latitude, pos.longitude);
       final predictions = await _places.autocomplete(value, location: near);
-      if (mounted) setState(() => _predictions = predictions);
+      if (mounted) {
+        setState(() {
+          _predictions = predictions;
+          _searchMessage = predictions.isEmpty
+              ? 'No suggestions. Check Places API, key restrictions, or quota.'
+              : '';
+        });
+      }
     });
   }
 
@@ -136,11 +161,22 @@ class _RouteSelectionScreenState extends State<RouteSelectionScreen> {
     setState(() {
       _loadingPlace = true;
       _predictions = [];
+      _searchMessage = '';
       _destinationController.text = prediction.description;
     });
     final target =
         prediction.location ?? await _places.placeLatLng(prediction.placeId);
-    if (target != null && mounted) {
+    if (target == null) {
+      if (mounted) {
+        setState(() {
+          _loadingPlace = false;
+          _searchMessage =
+              'Could not load destination details. Check Places API access.';
+        });
+      }
+      return;
+    }
+    if (mounted) {
       final nav = context.read<NavService>();
       await nav.fetchRoutes(target);
       if (!mounted) return;
@@ -174,6 +210,10 @@ class _RouteSelectionScreenState extends State<RouteSelectionScreen> {
       southwest: LatLng(minLat, minLng),
       northeast: LatLng(maxLat, maxLng),
     );
+  }
+
+  void _zoomBy(double amount) {
+    _mapController?.animateCamera(CameraUpdate.zoomBy(amount));
   }
 }
 
@@ -250,7 +290,7 @@ class _SearchPanel extends StatelessWidget {
               ...predictions.take(5).map(
                     (prediction) => ListTile(
                       dense: true,
-                      leading: const Icon(Icons.place, color: AppColors.green),
+                      leading: const Icon(Icons.place, color: AppColors.amber),
                       title: Text(prediction.description,
                           maxLines: 2, overflow: TextOverflow.ellipsis),
                       onTap: () => onPredictionTap(prediction),
@@ -304,12 +344,12 @@ class _RouteOptionsSheet extends StatelessWidget {
                       padding: const EdgeInsets.all(14),
                       decoration: BoxDecoration(
                         color: selected
-                            ? AppColors.green.withValues(alpha: .16)
+                            ? AppColors.orange.withValues(alpha: .16)
                             : AppColors.surfaceHigh.withValues(alpha: .75),
                         borderRadius: BorderRadius.circular(20),
                         border: Border.all(
                             color:
-                                selected ? AppColors.green : AppColors.border),
+                                selected ? AppColors.amber : AppColors.border),
                       ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -358,7 +398,7 @@ class _RouteOptionsSheet extends StatelessWidget {
                   icon: const Icon(Icons.navigation),
                   label: const Text('Start'),
                   style: FilledButton.styleFrom(
-                    backgroundColor: AppColors.green,
+                    backgroundColor: AppColors.amber,
                     foregroundColor: AppColors.background,
                     padding: const EdgeInsets.symmetric(
                         horizontal: 20, vertical: 15),

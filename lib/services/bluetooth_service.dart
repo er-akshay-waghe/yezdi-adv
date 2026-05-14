@@ -4,6 +4,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+import 'performance_monitor_service.dart';
+
 const String yezdiDeviceName = 'MY YEZDI';
 
 const String serviceUuidTbt = 'd6328aea-d630-4a83-b51b-1da8e8da8200';
@@ -26,6 +28,10 @@ class BikeBluetoothService extends ChangeNotifier {
   BluetoothDevice? _connectedDevice;
   final List<BleScanDevice> _scannedDevices = [];
   final List<String> _txLog = [];
+  BluetoothCharacteristic? _tbtChar;
+  BluetoothCharacteristic? _dtmChar;
+  BluetoothCharacteristic? _dtdChar;
+  Future<bool> _navWriteQueue = Future<bool>.value(true);
 
   bool _isBluetoothOn = false;
   bool _isScanning = false;
@@ -39,6 +45,9 @@ class BikeBluetoothService extends ChangeNotifier {
   StreamSubscription? _adapterStateSub;
   StreamSubscription? _connectionSub;
   Timer? _reconnectTimer;
+  DateTime _lastLogNotify = DateTime.fromMillisecondsSinceEpoch(0);
+  DateTime _lastNavPacketAt = DateTime.fromMillisecondsSinceEpoch(0);
+  String? _lastNavPacketSignature;
 
   List<BleScanDevice> get scannedDevices => List.unmodifiable(_scannedDevices);
   List<String> get txLog => List.unmodifiable(_txLog);
@@ -178,12 +187,18 @@ class BikeBluetoothService extends ChangeNotifier {
       try {
         await device.requestMtu(247);
       } catch (_) {}
+      try {
+        await _resolveNavigationCharacteristics(force: true);
+      } catch (e) {
+        debugPrint('Yezdi navigation service discovery pending: $e');
+      }
 
       _connectionSub?.cancel();
       _connectionSub = device.connectionState.listen((state) {
         if (state == BluetoothConnectionState.disconnected &&
             !_manualDisconnect) {
           _connectedDevice = null;
+          _clearNavigationCharacteristics();
           _connectionState = BikeConnectionState.disconnected;
           _status = 'Bike disconnected. Reconnecting';
           notifyListeners();
@@ -197,6 +212,7 @@ class BikeBluetoothService extends ChangeNotifier {
       notifyListeners();
     } catch (e) {
       _connectedDevice = null;
+      _clearNavigationCharacteristics();
       _connectionState = BikeConnectionState.disconnected;
       _status = 'Connection failed. Retrying';
       notifyListeners();
@@ -223,6 +239,7 @@ class BikeBluetoothService extends ChangeNotifier {
     await stopScan();
     await _connectedDevice?.disconnect();
     _connectedDevice = null;
+    _clearNavigationCharacteristics();
     _connectionState = BikeConnectionState.disconnected;
     _status = 'Disconnected';
     notifyListeners();
@@ -242,39 +259,106 @@ class BikeBluetoothService extends ChangeNotifier {
   }) async {
     if (!isConnected || _connectedDevice == null) return false;
 
+    final signature = '$signal:$dtmMeters:$dtdKm:$dtdM';
+    final now = DateTime.now();
+    if (signature == _lastNavPacketSignature &&
+        now.difference(_lastNavPacketAt) <
+            const Duration(milliseconds: 250)) {
+      return true;
+    }
+    _lastNavPacketSignature = signature;
+    _lastNavPacketAt = now;
+
+    final queued = _navWriteQueue
+        .catchError((Object _) => false)
+        .then((_) => _sendNavigationNow(
+              signal: signal,
+              dtmMeters: dtmMeters,
+              dtdKm: dtdKm,
+              dtdM: dtdM,
+            ));
+    _navWriteQueue = queued;
+    return queued;
+  }
+
+  Future<bool> _sendNavigationNow({
+    required int signal,
+    required int dtmMeters,
+    required int dtdKm,
+    required int dtdM,
+  }) async {
+    final stopwatch = Stopwatch()..start();
     try {
-      final services = await _connectedDevice!.discoverServices();
-      final tbtService = services.firstWhere(
-        (s) => s.uuid.toString().toLowerCase() == serviceUuidTbt,
-      );
-      final tbtChar = tbtService.characteristics.firstWhere(
-        (c) => c.uuid.toString().toLowerCase() == charUuidTbt,
-      );
-      final dtmChar = tbtService.characteristics.firstWhere(
-        (c) => c.uuid.toString().toLowerCase() == charUuidDtm,
-      );
-      final dtdChar = tbtService.characteristics.firstWhere(
-        (c) => c.uuid.toString().toLowerCase() == charUuidDtd,
-      );
+      final chars = await _resolveNavigationCharacteristics();
 
       final signalBytes = [signal & 0xFF];
       final dtmBytes = [dtmMeters & 0xFF, (dtmMeters >> 8) & 0xFF];
       final dtdBytes = [dtdKm & 0xFF, (dtdKm >> 8) & 0xFF, dtdM & 0xFF];
 
       // Keep the reverse-engineered cluster write order exactly as observed.
-      await tbtChar.write(signalBytes, withoutResponse: false);
+      await _writeClusterCharacteristic(chars.tbt, signalBytes);
       await Future.delayed(const Duration(milliseconds: 40));
-      await dtmChar.write(dtmBytes, withoutResponse: false);
+      await _writeClusterCharacteristic(chars.dtm, dtmBytes);
       await Future.delayed(const Duration(milliseconds: 40));
-      await dtdChar.write(dtdBytes, withoutResponse: false);
+      await _writeClusterCharacteristic(chars.dtd, dtdBytes);
 
+      stopwatch.stop();
+      PerformanceMonitorService.instance.recordBleWrite(stopwatch.elapsed);
       _log('NAV', [...signalBytes, ...dtmBytes, ...dtdBytes],
-          label: 'signal $signal');
+          label: 'signal $signal ${stopwatch.elapsedMilliseconds}ms');
       return true;
     } catch (e) {
+      _clearNavigationCharacteristics();
       debugPrint('NAV ERROR: $e');
       return false;
     }
+  }
+
+  Future<void> _writeClusterCharacteristic(
+    BluetoothCharacteristic characteristic,
+    List<int> bytes,
+  ) {
+    return characteristic
+        .write(bytes, withoutResponse: false)
+        .timeout(const Duration(milliseconds: 1500));
+  }
+
+  Future<
+      ({
+        BluetoothCharacteristic tbt,
+        BluetoothCharacteristic dtm,
+        BluetoothCharacteristic dtd,
+      })> _resolveNavigationCharacteristics({bool force = false}) async {
+    if (!force && _tbtChar != null && _dtmChar != null && _dtdChar != null) {
+      return (tbt: _tbtChar!, dtm: _dtmChar!, dtd: _dtdChar!);
+    }
+
+    final device = _connectedDevice;
+    if (device == null) {
+      throw StateError('No connected Yezdi BLE device');
+    }
+
+    final services = await device.discoverServices();
+    final tbtService = services.firstWhere(
+      (s) => s.uuid.toString().toLowerCase() == serviceUuidTbt,
+    );
+    _tbtChar = tbtService.characteristics.firstWhere(
+      (c) => c.uuid.toString().toLowerCase() == charUuidTbt,
+    );
+    _dtmChar = tbtService.characteristics.firstWhere(
+      (c) => c.uuid.toString().toLowerCase() == charUuidDtm,
+    );
+    _dtdChar = tbtService.characteristics.firstWhere(
+      (c) => c.uuid.toString().toLowerCase() == charUuidDtd,
+    );
+    return (tbt: _tbtChar!, dtm: _dtmChar!, dtd: _dtdChar!);
+  }
+
+  void _clearNavigationCharacteristics() {
+    _tbtChar = null;
+    _dtmChar = null;
+    _dtdChar = null;
+    _lastNavPacketSignature = null;
   }
 
   Future<bool> sendStartNavigation() =>
@@ -293,6 +377,11 @@ class BikeBluetoothService extends ChangeNotifier {
         '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}:${now.second.toString().padLeft(2, '0')}';
     _txLog.insert(0, '$time  $dir  $hex  ${label.isEmpty ? '' : '// $label'}');
     if (_txLog.length > 80) _txLog.removeLast();
+    if (dir == 'NAV' &&
+        now.difference(_lastLogNotify) < const Duration(milliseconds: 900)) {
+      return;
+    }
+    _lastLogNotify = now;
     notifyListeners();
   }
 
@@ -304,6 +393,7 @@ class BikeBluetoothService extends ChangeNotifier {
     _adapterStateSub?.cancel();
     _connectionSub?.cancel();
     _connectedDevice?.disconnect();
+    _clearNavigationCharacteristics();
     super.dispose();
   }
 }

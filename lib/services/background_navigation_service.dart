@@ -12,7 +12,7 @@ class BackgroundNavigationService {
         autoStart: false,
         isForegroundMode: true,
         notificationChannelId: 'yezdi_navigation',
-        initialNotificationTitle: 'Yezdi navigation',
+        initialNotificationTitle: 'My Yezdi navigation',
         initialNotificationContent: 'Navigation is ready',
         foregroundServiceNotificationId: 4210,
       ),

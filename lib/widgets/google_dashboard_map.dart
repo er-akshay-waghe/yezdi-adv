@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 
@@ -25,6 +27,7 @@ class GoogleDashboardMap extends StatelessWidget {
   final LatLng? destination;
   final ValueChanged<GoogleMapController>? onMapCreated;
   final ValueChanged<LatLng>? onTap;
+  final VoidCallback? onCameraMoveStarted;
   final CameraPositionCallback? onCameraMove;
   final VoidCallback? onCameraIdle;
   final bool showTraffic;
@@ -42,9 +45,10 @@ class GoogleDashboardMap extends StatelessWidget {
     this.destination,
     this.onMapCreated,
     this.onTap,
+    this.onCameraMoveStarted,
     this.onCameraMove,
     this.onCameraIdle,
-    this.showTraffic = true,
+    this.showTraffic = false,
     this.myLocationEnabled = false,
     this.interactive = true,
   });
@@ -63,6 +67,7 @@ class GoogleDashboardMap extends StatelessWidget {
         onMapCreated?.call(controller);
       },
       onTap: onTap,
+      onCameraMoveStarted: onCameraMoveStarted,
       onCameraMove: onCameraMove,
       onCameraIdle: onCameraIdle,
       mapType: MapType.normal,
@@ -74,9 +79,17 @@ class GoogleDashboardMap extends StatelessWidget {
       tiltGesturesEnabled: interactive,
       zoomGesturesEnabled: interactive,
       zoomControlsEnabled: false,
+      minMaxZoomPreference: const MinMaxZoomPreference(3, 20),
       myLocationEnabled: myLocationEnabled,
       myLocationButtonEnabled: false,
       mapToolbarEnabled: false,
+      gestureRecognizers: interactive
+          ? {
+              Factory<OneSequenceGestureRecognizer>(
+                () => EagerGestureRecognizer(),
+              ),
+            }
+          : const <Factory<OneSequenceGestureRecognizer>>{},
       polylines: {
         for (var i = 0; i < routes.length; i++)
           if (routes[i].points.length > 1)
@@ -88,7 +101,7 @@ class GoogleDashboardMap extends StatelessWidget {
               jointType: JointType.round,
               startCap: Cap.roundCap,
               endCap: Cap.roundCap,
-              geodesic: true,
+              geodesic: false,
             ),
       },
       markers: {
@@ -117,6 +130,55 @@ class GoogleDashboardMap extends StatelessWidget {
   }
 }
 
+class MapZoomControls extends StatelessWidget {
+  final VoidCallback onZoomIn;
+  final VoidCallback onZoomOut;
+
+  const MapZoomControls({
+    super.key,
+    required this.onZoomIn,
+    required this.onZoomOut,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: AppColors.surface.withValues(alpha: 0.88),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: AppColors.border),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x66000000),
+            blurRadius: 18,
+            offset: Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          IconButton(
+            tooltip: 'Zoom in',
+            onPressed: onZoomIn,
+            icon: const Icon(Icons.add, color: AppColors.text),
+          ),
+          Container(
+            width: 28,
+            height: 1,
+            color: AppColors.border,
+          ),
+          IconButton(
+            tooltip: 'Zoom out',
+            onPressed: onZoomOut,
+            icon: const Icon(Icons.remove, color: AppColors.text),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 const String googleDarkMapStyle = '''
 [
   {"elementType":"geometry","stylers":[{"color":"#10151d"}]},
@@ -129,7 +191,7 @@ const String googleDarkMapStyle = '''
   {"featureType":"road","elementType":"geometry.stroke","stylers":[{"color":"#0a0d12"}]},
   {"featureType":"road","elementType":"labels.text.fill","stylers":[{"color":"#a6afbb"}]},
   {"featureType":"road.highway","elementType":"geometry","stylers":[{"color":"#253343"}]},
-  {"featureType":"road.highway","elementType":"geometry.stroke","stylers":[{"color":"#34f28a"}]},
+  {"featureType":"road.highway","elementType":"geometry.stroke","stylers":[{"color":"#ffb33b"}]},
   {"featureType":"transit","stylers":[{"visibility":"off"}]},
   {"featureType":"water","elementType":"geometry","stylers":[{"color":"#071018"}]},
   {"featureType":"water","elementType":"labels.text.fill","stylers":[{"color":"#3ea2ff"}]}

@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
@@ -30,7 +32,10 @@ class _NavigationScreenState extends State<NavigationScreen> {
   late final NavService _navService;
   bool _followUser = true;
   bool _stopped = false;
+  bool _programmaticCameraMove = false;
   DateTime _lastCameraMove = DateTime.fromMillisecondsSinceEpoch(0);
+  LatLng? _lastCameraTarget;
+  double _lastCameraBearing = 0;
 
   @override
   void initState() {
@@ -59,37 +64,58 @@ class _NavigationScreenState extends State<NavigationScreen> {
     final nav = context.watch<NavService>();
     final bt = context.watch<BikeBluetoothService>();
     final status = context.watch<DashboardStatusService>();
-    final location = nav.smoothedLocation;
-
-    if (_followUser && location != null) {
-      _moveCamera(nav, location);
-    }
+    final fallbackLocation = nav.smoothedLocation;
 
     return Scaffold(
       body: Stack(
         children: [
           Positioned.fill(
-            child: location == null
-                ? Container(
+            child: ValueListenableBuilder<LatLng?>(
+              valueListenable: nav.smoothedLocationNotifier,
+              builder: (context, smoothLocation, _) {
+                final location = smoothLocation ?? fallbackLocation;
+                if (location == null) {
+                  return Container(
                     color: AppColors.background,
                     child: const Center(child: CircularProgressIndicator()),
-                  )
-                : GoogleDashboardMap(
-                    center: location,
-                    zoom: nav.cameraZoom,
-                    bearing: nav.bearing,
-                    tilt: 52,
-                    currentLocation: location,
-                    destination: nav.activeRoute?.destination,
-                    onMapCreated: (controller) => _mapController = controller,
-                    routes: [
-                      RouteMapOverlay(
-                        points: nav.polylinePoints,
-                        color: AppColors.green,
-                        width: 7,
-                      ),
-                    ],
-                  ),
+                  );
+                }
+
+                return ValueListenableBuilder<double>(
+                  valueListenable: nav.bearingNotifier,
+                  builder: (context, smoothBearing, _) {
+                    final bearing =
+                        smoothBearing == 0 ? nav.bearing : smoothBearing;
+                    if (_followUser) {
+                      _moveCamera(nav, location, bearing: bearing);
+                    }
+
+                    return GoogleDashboardMap(
+                      center: location,
+                      zoom: nav.cameraZoom,
+                      bearing: bearing,
+                      tilt: 52,
+                      currentLocation: location,
+                      destination: nav.activeRoute?.destination,
+                      onMapCreated: (controller) => _mapController = controller,
+                      onCameraMoveStarted: () {
+                        if (!_programmaticCameraMove && _followUser && mounted) {
+                          setState(() => _followUser = false);
+                        }
+                      },
+                      onCameraIdle: () => _programmaticCameraMove = false,
+                      routes: [
+                        RouteMapOverlay(
+                          points: nav.polylinePoints,
+                          color: AppColors.amber,
+                          width: 7,
+                        ),
+                      ],
+                    );
+                  },
+                );
+              },
+            ),
           ),
           const Positioned.fill(child: MapGlassScrim()),
           SafeArea(
@@ -124,10 +150,16 @@ class _NavigationScreenState extends State<NavigationScreen> {
             bottom: 220,
             child: Column(
               children: [
+                MapZoomControls(
+                  onZoomIn: () => _zoomBy(1),
+                  onZoomOut: () => _zoomBy(-1),
+                ),
+                const SizedBox(height: 12),
                 FloatingActionButton.small(
                   heroTag: 'follow',
                   backgroundColor: AppColors.surface,
-                  foregroundColor: _followUser ? AppColors.green : AppColors.muted,
+                  foregroundColor:
+                      _followUser ? AppColors.amber : AppColors.muted,
                   onPressed: () {
                     setState(() => _followUser = !_followUser);
                     final loc = nav.smoothedLocation;
@@ -161,27 +193,76 @@ class _NavigationScreenState extends State<NavigationScreen> {
     );
   }
 
-  void _moveCamera(NavService nav, LatLng location, {bool force = false}) {
+  void _moveCamera(
+    NavService nav,
+    LatLng location, {
+    bool force = false,
+    double? bearing,
+  }) {
     if (_mapController == null) return;
     final now = DateTime.now();
     if (!force &&
-        now.difference(_lastCameraMove) < const Duration(milliseconds: 550)) {
+        now.difference(_lastCameraMove) < const Duration(milliseconds: 580)) {
       return;
     }
+
+    final nextBearing = bearing ?? nav.bearing;
+    final lastTarget = _lastCameraTarget;
+    if (!force && lastTarget != null) {
+      final movedMeters = _distanceMeters(lastTarget, location);
+      final bearingDelta = _angleDelta(_lastCameraBearing, nextBearing);
+      if (movedMeters < 3.5 && bearingDelta < 6) return;
+    }
+
     _lastCameraMove = now;
+    _lastCameraTarget = location;
+    _lastCameraBearing = nextBearing;
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || _mapController == null || !_followUser) return;
+      _programmaticCameraMove = true;
       _mapController!.animateCamera(
         CameraUpdate.newCameraPosition(
           CameraPosition(
             target: location,
             zoom: nav.cameraZoom,
-            bearing: nav.bearing,
+            bearing: nextBearing,
             tilt: 52,
           ),
         ),
-      );
+      ).whenComplete(() {
+        Future<void>.delayed(const Duration(milliseconds: 120), () {
+          _programmaticCameraMove = false;
+        });
+      });
+    });
+  }
+
+  double _distanceMeters(LatLng a, LatLng b) {
+    const radius = 6371000.0;
+    final dLat = _rad(b.latitude - a.latitude);
+    final dLon = _rad(b.longitude - a.longitude);
+    final lat1 = _rad(a.latitude);
+    final lat2 = _rad(b.latitude);
+    final h = sin(dLat / 2) * sin(dLat / 2) +
+        cos(lat1) * cos(lat2) * sin(dLon / 2) * sin(dLon / 2);
+    return radius * 2 * atan2(sqrt(h), sqrt(1 - h));
+  }
+
+  double _angleDelta(double from, double to) {
+    return (((to - from + 540) % 360) - 180).abs();
+  }
+
+  double _rad(double degrees) => degrees * pi / 180;
+
+  void _zoomBy(double amount) {
+    final controller = _mapController;
+    if (controller == null) return;
+    _programmaticCameraMove = true;
+    controller.animateCamera(CameraUpdate.zoomBy(amount)).whenComplete(() {
+      Future<void>.delayed(const Duration(milliseconds: 120), () {
+        _programmaticCameraMove = false;
+      });
     });
   }
 }
@@ -286,13 +367,13 @@ class _RoundDashboardPanel extends StatelessWidget {
                     height: 112,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      color: AppColors.green.withValues(alpha: .12),
+                      color: AppColors.amber.withValues(alpha: .12),
                       border: Border.all(
-                        color: AppColors.green.withValues(alpha: .45),
+                        color: AppColors.amber.withValues(alpha: .45),
                       ),
                       boxShadow: [
                         BoxShadow(
-                          color: AppColors.green.withValues(alpha: .22),
+                          color: AppColors.amber.withValues(alpha: .22),
                           blurRadius: 30,
                         ),
                       ],
@@ -301,7 +382,7 @@ class _RoundDashboardPanel extends StatelessWidget {
                       child: NavArrowWidget(
                         direction: direction,
                         size: 72,
-                        color: AppColors.green,
+                        color: AppColors.amber,
                       ),
                     ),
                   ),
@@ -536,7 +617,7 @@ class _NotificationOverlay extends StatelessWidget {
       borderRadius: BorderRadius.circular(22),
       child: Row(
         children: [
-          Icon(icon, color: AppColors.green),
+          Icon(icon, color: AppColors.amber),
           const SizedBox(width: 12),
           Expanded(
             child: Column(

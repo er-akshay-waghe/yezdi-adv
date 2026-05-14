@@ -20,7 +20,7 @@ class NavArrowWidget extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = color ??
-        (direction == NavDirection.arrive ? AppColors.green : AppColors.blue);
+        (direction == NavDirection.arrive ? AppColors.green : AppColors.amber);
     return SizedBox(
       width: size,
       height: size,

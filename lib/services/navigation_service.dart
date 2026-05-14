@@ -12,14 +12,20 @@ import '../config/google_maps_config.dart';
 import '../models/route_models.dart';
 import '../utils/formatters.dart';
 import 'bluetooth_service.dart';
+import 'performance_monitor_service.dart';
 
 class NavService extends ChangeNotifier {
+  final ValueNotifier<LatLng?> smoothedLocationNotifier =
+      ValueNotifier<LatLng?>(null);
+  final ValueNotifier<double> bearingNotifier = ValueNotifier<double>(0);
+
   Position? _currentPosition;
   LatLng? _rawLocation;
   LatLng? _smoothedLocation;
   LatLng? _targetLocation;
   List<RouteOption> _routeOptions = [];
   RouteOption? _activeRoute;
+  List<double> _activeRouteRemainingMeters = const [];
   int _selectedRouteIndex = 0;
   int _currentStepIndex = 0;
   int _nearestPolylineIndex = 0;
@@ -40,12 +46,19 @@ class NavService extends ChangeNotifier {
   DateTime _lastBleWrite = DateTime.fromMillisecondsSinceEpoch(0);
   DateTime _lastRerouteAt = DateTime.fromMillisecondsSinceEpoch(0);
   DateTime _lastDashboardNotify = DateTime.fromMillisecondsSinceEpoch(0);
+  DateTime _lastMarkerUiNotify = DateTime.fromMillisecondsSinceEpoch(0);
+  DateTime _lastGpsLog = DateTime.fromMillisecondsSinceEpoch(0);
+  DateTime _gpsWindowStart = DateTime.now();
   int? _lastSignal;
   int? _lastDtmBucket;
+  int _gpsSamplesInWindow = 0;
+  double _gpsHz = 0;
+  bool _hasBearing = false;
 
   Position? get currentPosition => _currentPosition;
   LatLng? get rawLocation => _rawLocation;
-  LatLng? get smoothedLocation => _smoothedLocation ?? _rawLocation;
+  LatLng? get smoothedLocation =>
+      smoothedLocationNotifier.value ?? _smoothedLocation ?? _rawLocation;
   List<RouteOption> get routeOptions => List.unmodifiable(_routeOptions);
   RouteOption? get activeRoute => _activeRoute;
   int get selectedRouteIndex => _selectedRouteIndex;
@@ -64,6 +77,7 @@ class NavService extends ChangeNotifier {
   double get speedKmh => _speedKmh;
   double get bearing => _bearing;
   double get gpsAccuracyMeters => _gpsAccuracyMeters;
+  double get gpsHz => _gpsHz;
   String get error => _error;
 
   int get distanceToNextStep {
@@ -151,6 +165,7 @@ class NavService extends ChangeNotifier {
     if (!_isNavigating) {
       _routeOptions = [];
       _activeRoute = null;
+      _activeRouteRemainingMeters = const [];
       _remainingDistanceMeters = 0;
     }
     _safeNotify(force: true);
@@ -172,6 +187,7 @@ class NavService extends ChangeNotifier {
         'key': googleMapsApiKey,
       },
     );
+    final routeTimer = Stopwatch()..start();
 
     try {
       final response = await _getWithRetry(uri);
@@ -204,6 +220,7 @@ class NavService extends ChangeNotifier {
         _error = 'Directions API returned an empty route';
         if (!_isNavigating) {
           _activeRoute = null;
+          _activeRouteRemainingMeters = const [];
           _remainingDistanceMeters = 0;
         }
       } else {
@@ -214,6 +231,10 @@ class NavService extends ChangeNotifier {
         _error = 'Route fetch failed: $e';
       }
     } finally {
+      routeTimer.stop();
+      PerformanceMonitorService.instance.recordRouteCalculation(
+        routeTimer.elapsed,
+      );
       if (!_disposed && requestId == _routeRequestId) {
         _isLoadingRoute = false;
         _isRerouting = false;
@@ -230,6 +251,8 @@ class NavService extends ChangeNotifier {
     if (index < 0 || index >= _routeOptions.length) return;
     _selectedRouteIndex = index;
     _activeRoute = _routeOptions[index];
+    _activeRouteRemainingMeters =
+        _buildRemainingDistanceCache(_activeRoute!.polyline);
     _remainingDistanceMeters = _activeRoute!.distanceMeters.toDouble();
     _currentStepIndex = 0;
     _nearestPolylineIndex = 0;
@@ -246,14 +269,11 @@ class NavService extends ChangeNotifier {
     _lastDtmBucket = null;
     _offRouteSamples = 0;
     _startMarkerSmoothing();
-    btService.sendStartNavigation();
+    unawaited(btService.sendStartNavigation());
 
     _positionSub?.cancel();
     _positionSub = Geolocator.getPositionStream(
-      locationSettings: const LocationSettings(
-        accuracy: LocationAccuracy.bestForNavigation,
-        distanceFilter: 1,
-      ),
+      locationSettings: _navigationLocationSettings(),
     ).listen(
       (pos) => _onLocationUpdate(pos, btService),
       onError: (Object error) {
@@ -265,6 +285,26 @@ class NavService extends ChangeNotifier {
     _safeNotify(force: true);
   }
 
+  LocationSettings _navigationLocationSettings() {
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      return AndroidSettings(
+        accuracy: LocationAccuracy.bestForNavigation,
+        distanceFilter: 0,
+        intervalDuration: const Duration(milliseconds: 250),
+        foregroundNotificationConfig: const ForegroundNotificationConfig(
+          notificationTitle: 'My Yezdi navigation',
+          notificationText: 'Live route guidance is active',
+          enableWakeLock: true,
+        ),
+      );
+    }
+
+    return const LocationSettings(
+      accuracy: LocationAccuracy.bestForNavigation,
+      distanceFilter: 0,
+    );
+  }
+
   void stopNavigation({BikeBluetoothService? btService}) {
     if (!_isNavigating && _positionSub == null) return;
     _isNavigating = false;
@@ -272,11 +312,17 @@ class NavService extends ChangeNotifier {
     _positionSub = null;
     _stopMarkerSmoothing();
     _offRouteSamples = 0;
-    btService?.sendStopNavigation();
+    if (btService != null) {
+      unawaited(btService.sendStopNavigation());
+    }
     _safeNotify(force: true);
   }
 
   void _onLocationUpdate(Position pos, BikeBluetoothService btService) {
+    _recordGpsSample();
+    final previousStepIndex = _currentStepIndex;
+    final previousDistanceBucket = (_remainingDistanceMeters / 25).floor();
+
     _acceptPosition(pos);
     final route = _activeRoute;
     if (route == null || route.steps.isEmpty) {
@@ -321,7 +367,7 @@ class NavService extends ChangeNotifier {
     );
     if (finalDistance < 30) {
       _remainingDistanceMeters = 0;
-      btService.sendArrival();
+      unawaited(btService.sendArrival());
       stopNavigation();
       _safeNotify(force: true);
       return;
@@ -338,28 +384,35 @@ class NavService extends ChangeNotifier {
 
     _sendBleStep(btService, step, distToStep.round(), _remainingDistanceMeters);
     _maybeReroute(pos);
-    _safeNotify();
+    final nextDistanceBucket = (_remainingDistanceMeters / 25).floor();
+    _safeNotify(
+      force: previousStepIndex != _currentStepIndex ||
+          previousDistanceBucket != nextDistanceBucket,
+    );
   }
 
   void _acceptPosition(Position pos, {bool notify = false}) {
     final next = LatLng(pos.latitude, pos.longitude);
     _currentPosition = pos;
     _rawLocation = next;
-    _targetLocation = next;
-    _smoothedLocation ??= next;
+    _targetLocation = _predictLocation(next, pos);
+    if (_smoothedLocation == null) {
+      _smoothedLocation = next;
+      smoothedLocationNotifier.value = next;
+    }
     _speedKmh = max(0, pos.speed * 3.6);
     _gpsAccuracyMeters = pos.accuracy;
     if (pos.heading.isFinite && pos.heading >= 0) {
-      _bearing = pos.heading;
+      _setBearing(pos.heading, smoothing: _speedKmh > 8 ? 0.34 : 0.2);
     } else if (_smoothedLocation != null) {
-      _bearing = _bearingBetween(_smoothedLocation!, next);
+      _setBearing(_bearingBetween(_smoothedLocation!, next), smoothing: 0.28);
     }
     if (notify) _safeNotify(force: true);
   }
 
   void _startMarkerSmoothing() {
     _markerTimer?.cancel();
-    _markerTimer = Timer.periodic(const Duration(milliseconds: 33), (_) {
+    _markerTimer = Timer.periodic(const Duration(milliseconds: 66), (_) {
       final target = _targetLocation;
       final current = _smoothedLocation;
       if (!_isNavigating || target == null || current == null) return;
@@ -373,12 +426,20 @@ class NavService extends ChangeNotifier {
       if (distance < 0.35) {
         _smoothedLocation = target;
       } else {
+        final smoothing = _speedKmh > 45 ? 0.34 : (_speedKmh > 12 ? 0.28 : 0.2);
         _smoothedLocation = LatLng(
-          _lerp(current.latitude, target.latitude, 0.22),
-          _lerp(current.longitude, target.longitude, 0.22),
+          _lerp(current.latitude, target.latitude, smoothing),
+          _lerp(current.longitude, target.longitude, smoothing),
         );
       }
-      _safeNotify();
+      smoothedLocationNotifier.value = _smoothedLocation;
+
+      final now = DateTime.now();
+      if (now.difference(_lastMarkerUiNotify) >
+          const Duration(milliseconds: 260)) {
+        _lastMarkerUiNotify = now;
+        _safeNotify();
+      }
     });
   }
 
@@ -386,6 +447,7 @@ class NavService extends ChangeNotifier {
     _markerTimer?.cancel();
     _markerTimer = null;
     _smoothedLocation = _rawLocation;
+    smoothedLocationNotifier.value = _rawLocation;
   }
 
   void _maybeReroute(Position pos) {
@@ -428,12 +490,12 @@ class NavService extends ChangeNotifier {
     if (!shouldSend) return;
 
     final dtd = splitDtdMeters(dtdMeters);
-    btService.sendNavigation(
+    unawaited(btService.sendNavigation(
       signal: signal,
       dtmMeters: dtmMeters.clamp(0, 65535).toInt(),
       dtdKm: dtd.km,
       dtdM: dtd.hundreds,
-    );
+    ));
     _lastSignal = signal;
     _lastDtmBucket = dtmBucket;
     _lastBleWrite = now;
@@ -553,6 +615,21 @@ class NavService extends ChangeNotifier {
     throw lastError ?? StateError('Directions request failed');
   }
 
+  List<double> _buildRemainingDistanceCache(List<LatLng> points) {
+    if (points.isEmpty) return const [];
+    final remaining = List<double>.filled(points.length, 0);
+    for (var i = points.length - 2; i >= 0; i--) {
+      remaining[i] = remaining[i + 1] +
+          _distanceMeters(
+            points[i].latitude,
+            points[i].longitude,
+            points[i + 1].latitude,
+            points[i + 1].longitude,
+          );
+    }
+    return remaining;
+  }
+
   double _remainingDistanceFromPolyline(
     LatLng location,
     List<LatLng> points,
@@ -566,6 +643,13 @@ class NavService extends ChangeNotifier {
       points[index].latitude,
       points[index].longitude,
     );
+
+    if (_activeRouteRemainingMeters.length == points.length &&
+        index >= 0 &&
+        index < _activeRouteRemainingMeters.length) {
+      return remaining + _activeRouteRemainingMeters[index];
+    }
+
     for (var i = index; i < points.length - 1; i++) {
       remaining += _distanceMeters(
         points[i].latitude,
@@ -646,12 +730,83 @@ class NavService extends ChangeNotifier {
 
   double _lerp(double a, double b, double t) => a + (b - a) * t;
 
+  double _lerpAngle(double from, double to, double t) {
+    final delta = ((to - from + 540) % 360) - 180;
+    return (from + delta * t + 360) % 360;
+  }
+
+  void _setBearing(double nextBearing, {double smoothing = 0.28}) {
+    final normalized = (nextBearing + 360) % 360;
+    if (!_hasBearing) {
+      _bearing = normalized;
+      _hasBearing = true;
+    } else {
+      _bearing = _lerpAngle(_bearing, normalized, smoothing);
+    }
+    bearingNotifier.value = _bearing;
+  }
+
+  LatLng _predictLocation(LatLng location, Position pos) {
+    if (!pos.speed.isFinite ||
+        pos.speed < 2 ||
+        !pos.heading.isFinite ||
+        pos.heading < 0 ||
+        pos.accuracy > 35) {
+      return location;
+    }
+
+    final predictedMeters = min(pos.speed * 0.45, 8.0);
+    return _destinationPoint(location, pos.heading, predictedMeters);
+  }
+
+  LatLng _destinationPoint(LatLng start, double bearing, double meters) {
+    const radius = 6371000.0;
+    final brng = _rad(bearing);
+    final lat1 = _rad(start.latitude);
+    final lon1 = _rad(start.longitude);
+    final angularDistance = meters / radius;
+
+    final lat2 = asin(
+      sin(lat1) * cos(angularDistance) +
+          cos(lat1) * sin(angularDistance) * cos(brng),
+    );
+    final lon2 = lon1 +
+        atan2(
+          sin(brng) * sin(angularDistance) * cos(lat1),
+          cos(angularDistance) - sin(lat1) * sin(lat2),
+        );
+
+    return LatLng(lat2 * 180 / pi, lon2 * 180 / pi);
+  }
+
+  void _recordGpsSample() {
+    PerformanceMonitorService.instance.recordGpsSample();
+
+    _gpsSamplesInWindow++;
+    final now = DateTime.now();
+    final window = now.difference(_gpsWindowStart);
+    if (window >= const Duration(seconds: 3)) {
+      _gpsHz = _gpsSamplesInWindow / (window.inMilliseconds / 1000);
+      _gpsSamplesInWindow = 0;
+      _gpsWindowStart = now;
+    }
+
+    if (now.difference(_lastGpsLog) > const Duration(seconds: 8)) {
+      _lastGpsLog = now;
+      debugPrint(
+        'GPS diag: ${_gpsHz.toStringAsFixed(1)} Hz, '
+        '${_gpsAccuracyMeters.toStringAsFixed(0)}m accuracy, '
+        '${_speedKmh.toStringAsFixed(0)} km/h',
+      );
+    }
+  }
+
   void _safeNotify({bool force = false}) {
     if (_disposed) return;
     final now = DateTime.now();
     if (!force &&
         now.difference(_lastDashboardNotify) <
-            const Duration(milliseconds: 80)) {
+            const Duration(milliseconds: 160)) {
       return;
     }
     _lastDashboardNotify = now;
@@ -663,6 +818,8 @@ class NavService extends ChangeNotifier {
     _disposed = true;
     _positionSub?.cancel();
     _markerTimer?.cancel();
+    smoothedLocationNotifier.dispose();
+    bearingNotifier.dispose();
     super.dispose();
   }
 }
